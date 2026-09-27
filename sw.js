@@ -1,5 +1,5 @@
 // index.html 의 CONFIG.VERSION 과 반드시 같은 버전으로 함께 업로드
-const CACHE_NAME = 'fill-puzzle-v1.0.0';
+const CACHE_NAME = 'fill-puzzle-v2.0.0';
 const ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {

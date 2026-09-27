@@ -32,7 +32,7 @@
     position: fixed;
     inset: 0;
     background: radial-gradient(120% 80% at 50% 28%, #26463F 0%, var(--felt) 55%, var(--felt-deep) 100%);
-    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif;
   }
   #stage {
     position: absolute;
@@ -40,21 +40,38 @@
     padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
              env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
   }
+  #wrap { position: relative; width: 100%; height: 100%; }
   #board { display: block; width: 100%; height: 100%; touch-action: none; }
-  #newBtn {
-    position: absolute;
-    top: calc(env(safe-area-inset-top, 0px) + 10px);
-    right: calc(env(safe-area-inset-right, 0px) + 12px);
-    width: 44px; height: 44px;
+  .roundBtn {
     border: none; border-radius: 50%;
-    background: rgba(255, 255, 255, 0.06);
     color: var(--ink);
     display: flex; align-items: center; justify-content: center;
     touch-action: manipulation;
     cursor: pointer;
   }
+  .roundBtn:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+  #newBtn {
+    position: absolute;
+    top: calc(env(safe-area-inset-top, 0px) + 10px);
+    right: calc(env(safe-area-inset-right, 0px) + 12px);
+    width: 44px; height: 44px;
+    background: rgba(255, 255, 255, 0.06);
+    transition: opacity 0.2s;
+  }
   #newBtn:active { background: rgba(255, 255, 255, 0.14); }
-  #newBtn:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  #newBtn.hide { opacity: 0; pointer-events: none; }
+  #againBtn {
+    position: absolute;
+    width: 84px; height: 84px;
+    background: #2C4F47;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35), inset 0 2px 0 rgba(255, 255, 255, 0.12);
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-50%, -50%) scale(0.7);
+    transition: opacity 0.25s ease-out, transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  #againBtn.show { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%) scale(1); }
+  #againBtn:active { background: #35605A; }
   #ver {
     position: absolute;
     left: calc(env(safe-area-inset-left, 0px) + 14px);
@@ -69,7 +86,6 @@
     background: var(--felt-deep);
     color: var(--ink);
     align-items: center; justify-content: center;
-    font-size: 16px;
   }
   @media (orientation: landscape) and (max-height: 500px) {
     #rotate { display: flex; }
@@ -78,41 +94,56 @@
 </head>
 <body>
 <div id="stage">
-  <canvas id="board"></canvas>
-  <button id="newBtn" aria-label="새 판">
+  <div id="wrap">
+    <canvas id="board"></canvas>
+    <button id="againBtn" class="roundBtn" aria-label="다시">
+      <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>
+      </svg>
+    </button>
+  </div>
+  <button id="newBtn" class="roundBtn" aria-label="새 판">
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M20 11a8 8 0 1 0-2.3 5.7"/>
-      <path d="M20 4v7h-7"/>
+      <path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>
     </svg>
   </button>
   <div id="ver"></div>
 </div>
-<div id="rotate">세로로 돌려주세요</div>
+<div id="rotate">
+  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+       stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-label="세로로 돌려주세요">
+    <rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>
+  </svg>
+</div>
 
 <script>
 // ===================== 설정 =====================
 const CONFIG = {
-  VERSION: 'v1.0.0',          // sw.js 의 CACHE_NAME 과 반드시 같이 올릴 것
-  ROWS: 6,
-  COLS: 6,
-  PIECE_SIZE_WEIGHTS: { 2: 1, 3: 3, 4: 4, 5: 3 },  // 조각 칸 수별 가중치
-  MIN_PIECE: 2,               // 이보다 작은 조각은 이웃에 병합
-  BOARD_W_RATIO: 0.9,         // 보드 최대 폭 (화면 폭 대비)
-  BOARD_H_RATIO: 0.45,        // 보드 최대 높이 (화면 높이 대비)
+  VERSION: 'v2.0.0',          // sw.js 의 CACHE_NAME 과 반드시 같이 올릴 것
+  ROWS: 8,
+  COLS: 8,
+  TRAY_SLOTS: 3,
+  REFILL_TRIES: 30,           // 새 3개 중 최소 1개가 들어가도록 재추첨하는 최대 횟수
+  BOARD_W_RATIO: 0.92,
+  BOARD_H_RATIO: 0.5,
   BOARD_TOP_PX: 66,
-  TRAY_GAP_PX: 28,
-  SIDE_PAD_PX: 14,
-  BOTTOM_PAD_PX: 22,
-  TRAY_SCALE_MAX: 0.62,       // 대기 영역 조각 크기 상한 (보드 칸 대비)
-  TRAY_CELL_MIN_PX: 14,
-  LIFT_CELLS: 1.1,            // 터치 드래그 시 손가락 위로 띄우는 거리 (칸 단위)
+  TRAY_GAP_PX: 24,
+  SIDE_PAD_PX: 12,
+  BOTTOM_PAD_PX: 24,
+  TRAY_SCALE_MAX: 0.6,        // 대기 블록 칸 크기 상한 (보드 칸 대비)
+  LIFT_CELLS: 0.9,            // 터치 드래그 시 손가락 위로 띄우는 거리 (칸 단위)
   LIFT_MS: 110,
-  TWEEN_MS: 70,               // 위치 보간 시정수
-  ENTER_OFFSET_PX: 36,
-  WIN_PULSE_MS: 380,
-  WIN_STAGGER_MS: 45,
-  WIN_HOLD_MS: 1100,
+  TWEEN_MS: 70,
+  ENTER_OFFSET_PX: 40,
+  PLACE_POP_MS: 160,
+  CLEAR_MS: 260,
+  CLEAR_STAGGER_MS: 22,
+  SHAKE_MS: 520,
+  SHAKE_HZ: 14,
+  GRAY_MS: 450,
+  AGAIN_DELAY_MS: 560,
 };
 
 const PALETTE = [
@@ -120,10 +151,26 @@ const PALETTE = [
   '#5FA8A0', '#E8935A', '#B7C95A', '#9C6F52', '#C9A27A', '#F0A9A0',
 ];
 
+// [모양('/'=줄바꿈, '#'=칸), 가중치 합계, 좌우반전 포함 여부]
+const BASE_SHAPES = [
+  ['#', 2, false],
+  ['##', 3, false],
+  ['###', 3, false],
+  ['####', 3, false],
+  ['#####', 2, false],
+  ['##/##', 3, false],
+  ['##/##/##', 1.5, false],
+  ['###/###/###', 1.5, false],
+  ['#./##', 3, false],
+  ['#../###', 3, true],
+  ['#../#../###', 2, false],
+  ['###/.#.', 2, false],
+  ['.##/##.', 2, true],
+];
+
 const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // ===================== 난수 =====================
-/** 새 32bit 시드. Returns: uint32 */
 function newSeed() {
   const a = new Uint32Array(1);
   crypto.getRandomValues(a);
@@ -142,138 +189,182 @@ function makeRng(seed) {
   };
 }
 
-function shuffle(arr, rng) {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
-}
-
-function pickSize(rng) {
-  const entries = Object.entries(CONFIG.PIECE_SIZE_WEIGHTS);
-  const total = entries.reduce((s, [, w]) => s + w, 0);
-  let x = rng() * total;
-  for (const [k, w] of entries) { x -= w; if (x < 0) return Number(k); }
-  return Number(entries[entries.length - 1][0]);
-}
-
-// ===================== 판 분할 생성 =====================
-const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-
-/**
- * 완성된 판을 무작위 조각으로 분할. 정답이 반드시 존재함을 보장.
- * Args: rows, cols (칸), rng. Returns: [[ [r,c], ... ], ...] 조각별 칸 목록
- */
-function generateRegions(rows, cols, rng) {
-  const owner = Array.from({ length: rows }, () => Array(cols).fill(-1));
-  const inB = (r, c) => r >= 0 && r < rows && c >= 0 && c < cols;
-  const freeNb = (r, c) =>
-    DIRS.reduce((n, [dr, dc]) => n + (inB(r + dr, c + dc) && owner[r + dr][c + dc] === -1 ? 1 : 0), 0);
-  const regions = [];
-
-  while (true) {
-    // 자유 이웃이 가장 적은 칸부터 시작 -> 고립된 자투리 칸 감소
-    let best = [], bestN = 9;
-    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-      if (owner[r][c] !== -1) continue;
-      const n = freeNb(r, c);
-      if (n < bestN) { bestN = n; best = [[r, c]]; }
-      else if (n === bestN) best.push([r, c]);
-    }
-    if (!best.length) break;
-
-    const [r0, c0] = best[Math.floor(rng() * best.length)];
-    const id = regions.length;
-    const target = pickSize(rng);
-    const cells = [[r0, c0]];
-    owner[r0][c0] = id;
-
-    while (cells.length < target) {
-      const seen = new Set(), frontier = [];
-      for (const [r, c] of cells) for (const [dr, dc] of DIRS) {
-        const nr = r + dr, nc = c + dc, key = nr * cols + nc;
-        if (inB(nr, nc) && owner[nr][nc] === -1 && !seen.has(key)) { seen.add(key); frontier.push([nr, nc]); }
-      }
-      if (!frontier.length) break;
-      const [nr, nc] = frontier[Math.floor(rng() * frontier.length)];
-      owner[nr][nc] = id;
-      cells.push([nr, nc]);
-    }
-    regions.push(cells);
-  }
-
-  // 너무 작은 조각은 가장 작은 이웃 조각에 병합
-  let merged = true;
-  while (merged) {
-    merged = false;
-    for (let i = 0; i < regions.length; i++) {
-      const reg = regions[i];
-      if (!reg.length || reg.length >= CONFIG.MIN_PIECE) continue;
-      const nbIds = new Set();
-      for (const [r, c] of reg) for (const [dr, dc] of DIRS) {
-        const nr = r + dr, nc = c + dc;
-        if (inB(nr, nc) && owner[nr][nc] !== i) nbIds.add(owner[nr][nc]);
-      }
-      if (!nbIds.size) continue;
-      let tgt = -1;
-      for (const j of nbIds) if (tgt === -1 || regions[j].length < regions[tgt].length) tgt = j;
-      for (const [r, c] of reg) { owner[r][c] = tgt; regions[tgt].push([r, c]); }
-      regions[i] = [];
-      merged = true;
-    }
-  }
-  return regions.filter(r => r.length);
-}
-
-/** 칸 목록을 원점 기준으로 정규화한 조각 객체 생성 */
-function makePiece(cells, id, color) {
+// ===================== 블록 모양 =====================
+function normalize(cells) {
   const minR = Math.min(...cells.map(c => c[0]));
   const minC = Math.min(...cells.map(c => c[1]));
-  const norm = cells.map(([r, c]) => [r - minR, c - minC]);
+  return cells.map(([r, c]) => [r - minR, c - minC]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+}
+const keyOf = cells => cells.map(c => c.join(',')).join(';');
+const rotate = cells => normalize(cells.map(([r, c]) => [c, -r]));
+const mirror = cells => normalize(cells.map(([r, c]) => [r, -c]));
+
+/** 기본 모양 -> 회전(·반전) 변형 전체. Returns: [{cells, weight}] */
+function buildShapePool() {
+  const pool = [];
+  for (const [str, weight, withMirror] of BASE_SHAPES) {
+    const base = [];
+    str.split('/').forEach((row, r) => [...row].forEach((ch, c) => { if (ch === '#') base.push([r, c]); }));
+    const variants = new Map();
+    const seeds = withMirror ? [normalize(base), mirror(base)] : [normalize(base)];
+    for (let v of seeds) for (let i = 0; i < 4; i++) { variants.set(keyOf(v), v); v = rotate(v); }
+    for (const cells of variants.values()) pool.push({ cells, weight: weight / variants.size });
+  }
+  return pool;
+}
+const SHAPE_POOL = buildShapePool();
+const POOL_TOTAL = SHAPE_POOL.reduce((s, x) => s + x.weight, 0);
+
+function pickShape(rng) {
+  let x = rng() * POOL_TOTAL;
+  for (const s of SHAPE_POOL) { x -= s.weight; if (x < 0) return s.cells; }
+  return SHAPE_POOL[SHAPE_POOL.length - 1].cells;
+}
+
+function makePiece(cells, color) {
   return {
-    id, color,
-    cells: norm,
-    set: new Set(norm.map(([r, c]) => r + ',' + c)),
-    w: Math.max(...norm.map(c => c[1])) + 1,
-    h: Math.max(...norm.map(c => c[0])) + 1,
-    loc: 'tray',          // 'tray' | 'board' | 'drag'
-    row: 0, col: 0,       // 보드 위치 (칸)
-    tx: 0, ty: 0,         // 대기 영역 위치 (px)
-    cur: { x: 0, y: 0, s: 1 },  // 현재 그려지는 위치·칸 크기 (px)
+    color, cells,
+    set: new Set(cells.map(([r, c]) => r + ',' + c)),
+    w: Math.max(...cells.map(c => c[1])) + 1,
+    h: Math.max(...cells.map(c => c[0])) + 1,
+    slot: 0,
+    loc: 'tray',               // 'tray' | 'drag'
+    cur: { x: 0, y: 0, s: 1 }, // 현재 그려지는 위치·칸 크기 (px)
   };
 }
+const ONE = makePiece([[0, 0]], '#000');
 
 // ===================== 상태 =====================
 const canvas = document.getElementById('board');
 const ctx = canvas.getContext('2d');
+const againBtn = document.getElementById('againBtn');
+const newBtn = document.getElementById('newBtn');
+
 const state = {
   rows: CONFIG.ROWS, cols: CONFIG.COLS,
-  pieces: [], occ: [], drag: null,
-  winning: false, winStart: 0, seed: 0,
+  grid: [],        // grid[r][c] = null | { color, t: 놓인 시각 }
+  tray: [],        // 길이 3, 각 칸은 piece | null
+  drag: null,
+  clearing: [],    // 지워지는 칸 애니메이션 { r, c, color, t0 }
+  over: false, overStart: 0,
+  rng: Math.random,
 };
-const L = {};  // 레이아웃 (px)
+const L = {};
 
-function recomputeOcc() {
-  state.occ = Array.from({ length: state.rows }, () => Array(state.cols).fill(-1));
-  for (const p of state.pieces) if (p.loc === 'board')
-    for (const [r, c] of p.cells) state.occ[p.row + r][p.col + c] = p.id;
+function emptyGrid() {
+  return Array.from({ length: state.rows }, () => Array(state.cols).fill(null));
 }
 
 function canPlace(p, row, col) {
   for (const [r, c] of p.cells) {
     const rr = row + r, cc = col + c;
     if (rr < 0 || rr >= state.rows || cc < 0 || cc >= state.cols) return false;
-    if (state.occ[rr][cc] !== -1) return false;
+    if (state.grid[rr][cc]) return false;
   }
   return true;
 }
 
-function isComplete() {
-  let n = 0;
-  for (const p of state.pieces) if (p.loc === 'board') n += p.cells.length;
-  return n === state.rows * state.cols;
+function fitsAnywhere(p) {
+  for (let r = 0; r <= state.rows - p.h; r++)
+    for (let c = 0; c <= state.cols - p.w; c++)
+      if (canPlace(p, r, c)) return true;
+  return false;
 }
+
+/** 가상 배치 시 가득 차는 줄의 칸 목록. Returns: Set('r,c') */
+function linesIfPlaced(p, row, col) {
+  const filled = (r, c) => !!state.grid[r][c] || p.set.has((r - row) + ',' + (c - col));
+  const out = new Set();
+  for (let r = 0; r < state.rows; r++) {
+    let full = true;
+    for (let c = 0; c < state.cols && full; c++) full = filled(r, c);
+    if (full) for (let c = 0; c < state.cols; c++) out.add(r + ',' + c);
+  }
+  for (let c = 0; c < state.cols; c++) {
+    let full = true;
+    for (let r = 0; r < state.rows && full; r++) full = filled(r, c);
+    if (full) for (let r = 0; r < state.rows; r++) out.add(r + ',' + c);
+  }
+  return out;
+}
+
+// ===================== 게임 흐름 =====================
+function newGame() {
+  state.rng = makeRng(newSeed());
+  state.grid = emptyGrid();
+  state.tray = Array(CONFIG.TRAY_SLOTS).fill(null);
+  state.drag = null;
+  state.clearing = [];
+  state.over = false;
+  againBtn.classList.remove('show');
+  newBtn.classList.remove('hide');
+  refill();
+  requestFrame();
+}
+
+/** 새 블록 3개 공급. 최소 1개는 현재 판에 들어가도록 보정 */
+function refill() {
+  const rng = state.rng;
+  const draw = () => Array.from({ length: CONFIG.TRAY_SLOTS }, () =>
+    makePiece(pickShape(rng), PALETTE[Math.floor(rng() * PALETTE.length)]));
+  let cand = draw();
+  for (let i = 0; i < CONFIG.REFILL_TRIES && !cand.some(fitsAnywhere); i++) cand = draw();
+  if (!cand.some(fitsAnywhere)) {
+    // 재추첨으로도 안 되면 들어가는 모양 하나를 직접 찾아 끼워 넣음
+    const order = [...SHAPE_POOL].sort(() => rng() - 0.5);
+    for (const s of order) {
+      const p = makePiece(s.cells, cand[0].color);
+      if (fitsAnywhere(p)) { cand[Math.floor(rng() * cand.length)] = p; break; }
+    }
+  }
+  cand.forEach((p, i) => {
+    p.slot = i;
+    const t = targetOf(p);
+    p.cur = { x: t.x, y: t.y + (REDUCED_MOTION ? 0 : CONFIG.ENTER_OFFSET_PX), s: t.s };
+  });
+  state.tray = cand;
+}
+
+function place(p, row, col) {
+  const now = performance.now();
+  for (const [r, c] of p.cells) state.grid[row + r][col + c] = { color: p.color, t: now };
+
+  // 가득 찬 줄 삭제: 줄 안에서의 위치 순서로 시차를 둠
+  const fullRows = [], fullCols = [];
+  for (let r = 0; r < state.rows; r++) if (state.grid[r].every(Boolean)) fullRows.push(r);
+  for (let c = 0; c < state.cols; c++) if (state.grid.every(row => row[c])) fullCols.push(c);
+  const delay = new Map();
+  for (const r of fullRows) for (let c = 0; c < state.cols; c++) {
+    const k = r + ',' + c, d = c * CONFIG.CLEAR_STAGGER_MS;
+    delay.set(k, Math.min(delay.get(k) ?? Infinity, d));
+  }
+  for (const c of fullCols) for (let r = 0; r < state.rows; r++) {
+    const k = r + ',' + c, d = r * CONFIG.CLEAR_STAGGER_MS;
+    delay.set(k, Math.min(delay.get(k) ?? Infinity, d));
+  }
+  for (const [k, d] of delay) {
+    const [r, c] = k.split(',').map(Number);
+    state.clearing.push({ r, c, color: state.grid[r][c].color, t0: now + d });
+    state.grid[r][c] = null;
+  }
+
+  state.tray[p.slot] = null;
+  if (state.tray.every(x => !x)) refill();
+  const left = state.tray.filter(Boolean);
+  if (left.length && !left.some(fitsAnywhere)) gameOver();
+}
+
+function gameOver() {
+  state.over = true;
+  state.overStart = performance.now();
+  newBtn.classList.add('hide');
+  setTimeout(() => { if (state.over) againBtn.classList.add('show'); },
+    REDUCED_MOTION ? 0 : CONFIG.AGAIN_DELAY_MS);
+  requestFrame();
+}
+
+againBtn.addEventListener('click', newGame);
+newBtn.addEventListener('click', () => { if (!state.drag) newGame(); });
 
 // ===================== 레이아웃 =====================
 function layout() {
@@ -286,89 +377,27 @@ function layout() {
   const cell = Math.floor(Math.min(W * CONFIG.BOARD_W_RATIO / state.cols, H * CONFIG.BOARD_H_RATIO / state.rows));
   const bw = cell * state.cols, bh = cell * state.rows;
   const bx = Math.round((W - bw) / 2), by = CONFIG.BOARD_TOP_PX;
-  const trayY = by + bh + CONFIG.TRAY_GAP_PX;
-  Object.assign(L, {
-    W, H, cell, bx, by, bw, bh,
-    trayX: CONFIG.SIDE_PAD_PX, trayY,
-    trayW: W - 2 * CONFIG.SIDE_PAD_PX,
-    trayH: Math.max(40, H - trayY - CONFIG.BOTTOM_PAD_PX),
-  });
+  const trayX = CONFIG.SIDE_PAD_PX, trayY = by + bh + CONFIG.TRAY_GAP_PX;
+  const trayW = W - 2 * CONFIG.SIDE_PAD_PX;
+  const trayH = Math.max(60, H - trayY - CONFIG.BOTTOM_PAD_PX);
+  const slotW = trayW / CONFIG.TRAY_SLOTS;
+  // 가장 긴 블록(5칸)이 슬롯 안에 들어가도록
+  const tc = Math.floor(Math.min(cell * CONFIG.TRAY_SCALE_MAX, slotW * 0.96 / 5, trayH * 0.84 / 5));
+  Object.assign(L, { W, H, cell, bx, by, bw, bh, trayX, trayY, trayW, trayH, slotW, tc });
 
-  packTray(state.pieces.filter(p => p.loc === 'tray'));
-  for (const p of state.pieces) if (p.loc !== 'drag') p.cur = targetOf(p);
+  againBtn.style.left = (bx + bw / 2) + 'px';
+  againBtn.style.top = (by + bh / 2) + 'px';
+
+  for (const p of state.tray) if (p && p.loc === 'tray') p.cur = targetOf(p);
   render(performance.now());
 }
 
-/** 대기 영역에 조각들을 선반(shelf) 방식으로 배치. 들어갈 때까지 조각 크기를 줄임 */
-function packTray(list) {
-  const maxTc = Math.floor(L.cell * CONFIG.TRAY_SCALE_MAX);
-  L.tc = maxTc;
-  if (!list.length) return;
-  const sorted = [...list].sort((a, b) => b.h - a.h);
-  for (let tc = maxTc; tc >= CONFIG.TRAY_CELL_MIN_PX; tc--) {
-    if (shelf(sorted, tc, false)) { L.tc = tc; return; }
-  }
-  L.tc = CONFIG.TRAY_CELL_MIN_PX;
-  shelf(sorted, L.tc, true);
-}
-
-function shelf(list, tc, force) {
-  const gap = Math.max(8, tc * 0.55);
-  const rows = [];
-  let row = { items: [], w: 0, h: 0 };
-  for (const p of list) {
-    const pw = p.w * tc, ph = p.h * tc;
-    if (row.items.length && row.w + gap + pw > L.trayW) { rows.push(row); row = { items: [], w: 0, h: 0 }; }
-    row.w += (row.items.length ? gap : 0) + pw;
-    row.h = Math.max(row.h, ph);
-    row.items.push(p);
-  }
-  rows.push(row);
-  const total = rows.reduce((s, r) => s + r.h, 0) + gap * (rows.length - 1);
-  if (total > L.trayH && !force) return false;
-
-  let y = L.trayY + Math.max(0, (L.trayH - total) / 2);
-  for (const r of rows) {
-    let x = L.trayX + (L.trayW - r.w) / 2;
-    for (const p of r.items) {
-      p.tx = x;
-      p.ty = y + (r.h - p.h * tc) / 2;
-      x += p.w * tc + gap;
-    }
-    y += r.h + gap;
-  }
-  return true;
-}
-
 function targetOf(p) {
-  if (p.loc === 'board') return { x: L.bx + p.col * L.cell, y: L.by + p.row * L.cell, s: L.cell };
-  return { x: p.tx, y: p.ty, s: L.tc };
-}
-
-// ===================== 스테이지 =====================
-function newStage() {
-  state.seed = newSeed();
-  window.__seed = state.seed;  // 디버그용: 콘솔에서 확인
-  const rng = makeRng(state.seed);
-  const regions = shuffle(generateRegions(state.rows, state.cols, rng), rng);
-  const colors = shuffle([...PALETTE], rng);
-  state.pieces = regions.map((cells, i) => makePiece(cells, i, colors[i % colors.length]));
-  state.drag = null;
-  state.winning = false;
-  recomputeOcc();
-  packTray(state.pieces);
-  for (const p of state.pieces) {
-    const t = targetOf(p);
-    p.cur = { x: t.x, y: t.y + (REDUCED_MOTION ? 0 : CONFIG.ENTER_OFFSET_PX), s: t.s };
-  }
-  requestFrame();
-}
-
-function startWin() {
-  state.winning = true;
-  state.winStart = performance.now();
-  requestFrame();
-  setTimeout(newStage, CONFIG.WIN_HOLD_MS);
+  return {
+    x: L.trayX + p.slot * L.slotW + (L.slotW - p.w * L.tc) / 2,
+    y: L.trayY + (L.trayH - p.h * L.tc) / 2,
+    s: L.tc,
+  };
 }
 
 // ===================== 입력 =====================
@@ -377,52 +406,41 @@ function localPt(e) {
   return { x: e.clientX - rect.left, y: e.clientY - rect.top };
 }
 
-function hitTest(x, y) {
-  for (let i = state.pieces.length - 1; i >= 0; i--) {
-    const p = state.pieces[i];
-    const { x: px, y: py, s } = p.cur;
-    const pad = Math.max(4, s * 0.15);
-    for (const [r, c] of p.cells) {
-      const cx = px + c * s, cy = py + r * s;
-      if (x >= cx - pad && x <= cx + s + pad && y >= cy - pad && y <= cy + s + pad) return p;
-    }
-  }
-  return null;
-}
-
 function updateDrag(now) {
-  const d = state.drag;
+  const d = state.drag, p = d.p, s = L.cell;
   const k = REDUCED_MOTION ? 1 : Math.min(1, (now - d.t0) / CONFIG.LIFT_MS);
-  const lift = d.liftFull * k;
-  const s = L.cell;
-  d.p.cur = { x: d.x - d.gx * s, y: d.y - d.gy * s - lift, s };
-  const col = Math.round((d.p.cur.x - L.bx) / s);
-  const row = Math.round((d.p.cur.y - L.by) / s);
-  d.ghost = canPlace(d.p, row, col) ? { row, col } : null;
+  // 터치: 블록 아래 끝이 손가락 위로 떠 있음 / 마우스: 커서 중앙
+  const ax = p.w * s / 2;
+  const ay = d.touch ? p.h * s + d.lift * k : p.h * s / 2;
+  p.cur = { x: d.x - ax, y: d.y - ay, s };
+  const col = Math.round((p.cur.x - L.bx) / s);
+  const row = Math.round((p.cur.y - L.by) / s);
+  if (canPlace(p, row, col)) {
+    d.ghost = { row, col };
+    d.lines = linesIfPlaced(p, row, col);
+  } else {
+    d.ghost = null;
+    d.lines = null;
+  }
 }
 
 canvas.addEventListener('pointerdown', e => {
-  if (state.drag || state.winning) return;
+  if (state.drag || state.over) return;
   const { x, y } = localPt(e);
-  const p = hitTest(x, y);
+  if (y < L.trayY - L.cell * 0.4) return;
+  const slot = Math.floor((x - L.trayX) / L.slotW);
+  const p = state.tray[slot];
   if (!p) return;
   e.preventDefault();
   canvas.setPointerCapture(e.pointerId);
-
-  const s = p.cur.s;
+  p.loc = 'drag';
   state.drag = {
     p, id: e.pointerId, x, y,
-    gx: (x - p.cur.x) / s, gy: (y - p.cur.y) / s,   // 잡은 위치 (칸 단위)
-    liftFull: e.pointerType === 'mouse' ? 0 : L.cell * CONFIG.LIFT_CELLS,
+    touch: e.pointerType !== 'mouse',
+    lift: L.cell * CONFIG.LIFT_CELLS,
     t0: performance.now(),
-    origin: { loc: p.loc, row: p.row, col: p.col, tx: p.tx, ty: p.ty },
-    ghost: null,
+    ghost: null, lines: null,
   };
-  p.loc = 'drag';
-  // 맨 위로 올림
-  state.pieces.splice(state.pieces.indexOf(p), 1);
-  state.pieces.push(p);
-  recomputeOcc();
   updateDrag(performance.now());
   requestFrame();
 });
@@ -439,33 +457,13 @@ canvas.addEventListener('pointermove', e => {
 function endDrag(e, cancelled) {
   const d = state.drag;
   if (!d || e.pointerId !== d.id) return;
-  const p = d.p;
-  const cy = p.cur.y + p.h * p.cur.s / 2;
-  const cx = p.cur.x + p.w * p.cur.s / 2;
-
-  if (!cancelled && d.ghost) {
-    p.loc = 'board'; p.row = d.ghost.row; p.col = d.ghost.col;
-  } else if (!cancelled && cy > L.by + L.bh) {
-    // 대기 영역에 자유롭게 내려놓기
-    p.loc = 'tray';
-    p.tx = Math.min(Math.max(cx - p.w * L.tc / 2, L.trayX), L.trayX + L.trayW - p.w * L.tc);
-    p.ty = Math.min(Math.max(cy - p.h * L.tc / 2, L.trayY), L.trayY + L.trayH - p.h * L.tc);
-  } else {
-    // 원래 자리로 복귀
-    Object.assign(p, d.origin);
-  }
   state.drag = null;
-  recomputeOcc();
+  d.p.loc = 'tray';
+  if (!cancelled && d.ghost) place(d.p, d.ghost.row, d.ghost.col);
   requestFrame();
-  if (isComplete()) startWin();
 }
 canvas.addEventListener('pointerup', e => endDrag(e, false));
 canvas.addEventListener('pointercancel', e => endDrag(e, true));
-
-document.getElementById('newBtn').addEventListener('click', () => {
-  if (state.drag || state.winning) return;
-  newStage();
-});
 
 // iOS Safari 기본 제스처 차단
 document.addEventListener('gesturestart', e => e.preventDefault());
@@ -474,13 +472,22 @@ document.addEventListener('contextmenu', e => e.preventDefault());
 document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
 
 // ===================== 그리기 =====================
-function shade(hex, amt) {
-  // amt < 0 이면 어둡게, > 0 이면 밝게
+function hexRgb(hex) {
   const n = parseInt(hex.slice(1), 16);
-  let r = n >> 16, g = (n >> 8) & 255, b = n & 255;
-  const t = amt < 0 ? 0 : 255, a = Math.abs(amt);
-  r = Math.round(r + (t - r) * a); g = Math.round(g + (t - g) * a); b = Math.round(b + (t - b) * a);
-  return `rgb(${r},${g},${b})`;
+  return [n >> 16, (n >> 8) & 255, n & 255];
+}
+function rgb([r, g, b]) { return `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`; }
+function mix(a, b, t) { return a.map((v, i) => v + (b[i] - v) * t); }
+
+/** 색 변형. dark: 0~1 어둡게, gray: 0~1 회색화 */
+function tone(hex, dark = 0, gray = 0) {
+  let c = hexRgb(hex);
+  if (gray > 0) {
+    const l = 0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2];
+    c = mix(c, [l * 0.62, l * 0.66, l * 0.64], gray);
+  }
+  if (dark > 0) c = mix(c, [0, 0, 0], dark);
+  return rgb(c);
 }
 
 function rrect(path, x, y, w, h, rad) {
@@ -497,100 +504,132 @@ function rrect(path, x, y, w, h, rad) {
   path.closePath();
 }
 
-/** 칸은 사방 inset, 인접 칸 사이는 다리(bridge)로 연결 -> 외곽만 둥글고 안쪽 모서리가 깨끗한 Path2D */
+/** 조각을 칸 단위 블록들로 그리는 Path2D (보드에 놓인 칸과 같은 모양) */
 function piecePath(p, x, y, s, dy) {
-  const g = s * 0.05, rad = s * 0.2;
-  const has = (r, c) => p.set.has(r + ',' + c);
+  const g = s * 0.06, rad = s * 0.2, w = s - 2 * g;
   const path = new Path2D();
-  for (const [r, c] of p.cells) {
-    const T = has(r - 1, c), B = has(r + 1, c), Lf = has(r, c - 1), R = has(r, c + 1);
-    const x0 = x + c * s + g, y0 = y + r * s + g + dy, w = s - 2 * g;
-    rrect(path, x0, y0, w, w, [
-      !T && !Lf ? rad : 0, !T && !R ? rad : 0, !B && !R ? rad : 0, !B && !Lf ? rad : 0,
-    ]);
-    // 오른쪽·아래 이웃과의 다리
-    if (R) path.rect(x0 + w - 0.5, y0, 2 * g + 1, w);
-    if (B) path.rect(x0, y0 + w - 0.5, w, 2 * g + 1);
-    // 2x2 가운데 틈
-    if (R && B && has(r + 1, c + 1)) path.rect(x0 + w - 0.5, y0 + w - 0.5, 2 * g + 1, 2 * g + 1);
-  }
+  for (const [r, c] of p.cells) rrect(path, x + c * s + g, y + r * s + g + dy, w, w, rad);
   return path;
 }
 
-function drawPiece(p, x, y, s, lifted) {
+function drawPiece(p, x, y, s, color, opts = {}) {
+  const gray = opts.gray || 0;
   const depth = Math.max(2, s * 0.07);
   ctx.save();
-  if (lifted) {
+  if (opts.alpha != null) ctx.globalAlpha = opts.alpha;
+  if (opts.lifted) {
     ctx.shadowColor = 'rgba(0,0,0,0.38)';
     ctx.shadowBlur = s * 0.35;
     ctx.shadowOffsetY = s * 0.18;
   }
-  ctx.fillStyle = shade(p.color, -0.38);
+  ctx.fillStyle = tone(color, 0.38, gray);
   ctx.fill(piecePath(p, x, y, s, depth));
-  ctx.restore();
+  ctx.shadowColor = 'transparent';
 
   const body = piecePath(p, x, y, s, 0);
-  ctx.fillStyle = p.color;
+  ctx.fillStyle = tone(color, 0, gray);
   ctx.fill(body);
 
-  // 윗면 하이라이트: 한 경로로 모아 한 번만 칠해 이음새 겹침 방지
+  // 윗면 하이라이트
   const hl = new Path2D();
   for (const [r, c] of p.cells) {
     if (p.set.has((r - 1) + ',' + c)) continue;
     hl.rect(x + c * s - 0.5, y + r * s, s + 1, s * 0.16);
   }
-  ctx.save();
   ctx.clip(body);
-  ctx.fillStyle = 'rgba(255,255,255,0.22)';
+  ctx.fillStyle = `rgba(255,255,255,${0.22 * (1 - gray * 0.6)})`;
   ctx.fill(hl);
   ctx.restore();
 }
 
-function drawBoard() {
+function drawBlock(x, y, s, color, opts) { drawPiece(ONE, x, y, s, color, opts); }
+
+function drawBoardBase(ox, oy) {
   const { bx, by, bw, bh, cell: s } = L;
   const pad = s * 0.12;
   const tray = new Path2D();
-  rrect(tray, bx - pad, by - pad, bw + 2 * pad, bh + 2 * pad, s * 0.24);
+  rrect(tray, bx + ox - pad, by + oy - pad, bw + 2 * pad, bh + 2 * pad, s * 0.24);
   ctx.fillStyle = '#132823';
   ctx.fill(tray);
-
   const holes = new Path2D();
   for (let r = 0; r < state.rows; r++) for (let c = 0; c < state.cols; c++)
-    rrect(holes, bx + c * s + s * 0.07, by + r * s + s * 0.07, s * 0.86, s * 0.86, s * 0.16);
+    rrect(holes, bx + ox + c * s + s * 0.07, by + oy + r * s + s * 0.07, s * 0.86, s * 0.86, s * 0.16);
   ctx.fillStyle = 'rgba(255,255,255,0.045)';
   ctx.fill(holes);
 }
 
-function drawGhost() {
-  const d = state.drag;
-  if (!d || !d.ghost) return;
-  const s = L.cell;
-  ctx.save();
-  ctx.globalAlpha = 0.32;
-  ctx.fillStyle = d.p.color;
-  ctx.fill(piecePath(d.p, L.bx + d.ghost.col * s, L.by + d.ghost.row * s, s, 0));
-  ctx.restore();
+function shakeOffset(now) {
+  if (!state.over || REDUCED_MOTION) return [0, 0];
+  const t = now - state.overStart;
+  if (t >= CONFIG.SHAKE_MS) return [0, 0];
+  const amp = L.cell * 0.22 * (1 - t / CONFIG.SHAKE_MS);
+  const w = 2 * Math.PI * CONFIG.SHAKE_HZ * t / 1000;
+  return [Math.sin(w) * amp, Math.cos(w * 0.8) * amp * 0.35];
 }
 
-function winBump(p, now) {
-  if (!state.winning || REDUCED_MOTION) return 0;
-  const t = (now - state.winStart - (p.row + p.col) * CONFIG.WIN_STAGGER_MS) / CONFIG.WIN_PULSE_MS;
-  return t > 0 && t < 1 ? Math.sin(Math.PI * t) * 0.08 : 0;
+function grayLevel(now) {
+  if (!state.over) return 0;
+  if (REDUCED_MOTION) return 1;
+  return Math.min(1, Math.max(0, (now - state.overStart - CONFIG.SHAKE_MS * 0.4) / CONFIG.GRAY_MS));
 }
 
 function render(now) {
+  const s = L.cell;
   ctx.clearRect(0, 0, L.W, L.H);
-  drawBoard();
-  drawGhost();
-  for (const p of state.pieces) {
-    if (p.loc !== 'board') continue;
-    const b = winBump(p, now);
-    const s = p.cur.s * (1 + b);
-    const cx = p.cur.x + p.w * p.cur.s / 2, cy = p.cur.y + p.h * p.cur.s / 2;
-    drawPiece(p, cx - p.w * s / 2, cy - p.h * s / 2, s, false);
+  const [ox, oy] = shakeOffset(now);
+  const gray = grayLevel(now);
+  const d = state.drag;
+  drawBoardBase(ox, oy);
+
+  // 놓인 칸 (놓는 순간 살짝 튀는 효과)
+  for (let r = 0; r < state.rows; r++) for (let c = 0; c < state.cols; c++) {
+    const cellObj = state.grid[r][c];
+    if (!cellObj) continue;
+    let k = 1;
+    if (!REDUCED_MOTION) {
+      const t = (now - cellObj.t) / CONFIG.PLACE_POP_MS;
+      if (t < 1) k = 1 + 0.1 * Math.sin(Math.PI * t);
+    }
+    const ss = s * k, x = L.bx + ox + c * s - (ss - s) / 2, y = L.by + oy + r * s - (ss - s) / 2;
+    const lit = d && d.lines && d.lines.has(r + ',' + c);
+    drawBlock(x, y, ss, lit ? d.p.color : cellObj.color, { gray });
   }
-  for (const p of state.pieces) if (p.loc === 'tray') drawPiece(p, p.cur.x, p.cur.y, p.cur.s, false);
-  if (state.drag) { const p = state.drag.p; drawPiece(p, p.cur.x, p.cur.y, p.cur.s, true); }
+
+  // 지워지는 칸
+  const alive = [];
+  for (const cl of state.clearing) {
+    const t = (now - cl.t0) / CONFIG.CLEAR_MS;
+    if (t >= 1) continue;
+    alive.push(cl);
+    const k = t < 0 ? 1 : 1 - t;
+    const ss = s * (t < 0 ? 1 : 0.4 + 0.6 * k);
+    drawBlock(L.bx + ox + cl.c * s + (s - ss) / 2, L.by + oy + cl.r * s + (s - ss) / 2, ss, cl.color,
+      { alpha: Math.max(0, k), gray });
+  }
+  state.clearing = alive;
+
+  // 놓일 자리 미리보기
+  if (d && d.ghost) {
+    ctx.save();
+    ctx.globalAlpha = 0.34;
+    ctx.fillStyle = d.p.color;
+    ctx.fill(piecePath(d.p, L.bx + d.ghost.col * s, L.by + d.ghost.row * s, s, 0));
+    ctx.restore();
+  }
+
+  // 게임오버 시 보드 어둡게
+  if (gray > 0) {
+    const pad = s * 0.12, dim = new Path2D();
+    rrect(dim, L.bx + ox - pad, L.by + oy - pad, L.bw + 2 * pad, L.bh + 2 * pad, s * 0.24);
+    ctx.fillStyle = `rgba(10,22,19,${0.35 * gray})`;
+    ctx.fill(dim);
+  }
+
+  for (const p of state.tray) {
+    if (!p || p.loc !== 'tray') continue;
+    drawPiece(p, p.cur.x, p.cur.y, p.cur.s, p.color, { gray });
+  }
+  if (d) drawPiece(d.p, d.p.cur.x, d.p.cur.y, d.p.cur.s, d.p.color, { lifted: true });
 }
 
 // ===================== 애니메이션 루프 =====================
@@ -600,8 +639,8 @@ function requestFrame() { if (!rafId) rafId = requestAnimationFrame(frame); }
 function stepTweens(dt) {
   const k = REDUCED_MOTION ? 1 : 1 - Math.exp(-dt / CONFIG.TWEEN_MS);
   let moving = false;
-  for (const p of state.pieces) {
-    if (p.loc === 'drag') continue;
+  for (const p of state.tray) {
+    if (!p || p.loc !== 'tray') continue;
     const t = targetOf(p);
     for (const key of ['x', 'y', 's']) {
       const diff = t[key] - p.cur[key];
@@ -612,6 +651,14 @@ function stepTweens(dt) {
   return moving;
 }
 
+function busy(now) {
+  if (state.drag || state.clearing.length) return true;
+  if (state.over && now - state.overStart < CONFIG.SHAKE_MS + CONFIG.GRAY_MS) return true;
+  for (const row of state.grid) for (const c of row)
+    if (c && now - c.t < CONFIG.PLACE_POP_MS) return true;
+  return false;
+}
+
 function frame(t) {
   rafId = 0;
   const dt = lastT ? Math.min(50, t - lastT) : 16;
@@ -619,16 +666,18 @@ function frame(t) {
   if (state.drag) updateDrag(t);
   const moving = stepTweens(dt);
   render(t);
-  if (moving || state.drag || state.winning) requestFrame();
-  else lastT = 0;
+  if (moving || busy(t)) requestFrame();
+  else { lastT = 0; }
 }
 
 // ===================== 시작 =====================
 document.getElementById('ver').textContent = CONFIG.VERSION;
 window.addEventListener('resize', layout);
 if (window.visualViewport) window.visualViewport.addEventListener('resize', layout);
+state.grid = emptyGrid();   // 첫 layout() 렌더 전에 빈 판 준비
+state.tray = Array(CONFIG.TRAY_SLOTS).fill(null);
 layout();
-newStage();
+newGame();
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch(() => {});
