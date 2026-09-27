@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="채움">
+<meta name="theme-color" content="#1F3A34">
+<title>채움</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root {
+    --felt: #1F3A34;
+    --felt-deep: #152A25;
+    --ink: #CFE0D8;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+    background: var(--felt);
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    position: fixed;
+    inset: 0;
+    background: radial-gradient(120% 80% at 50% 28%, #26463F 0%, var(--felt) 55%, var(--felt-deep) 100%);
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", sans-serif;
+  }
+  #stage {
+    position: absolute;
+    inset: 0;
+    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+             env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  }
+  #board { display: block; width: 100%; height: 100%; touch-action: none; }
+  #newBtn {
+    position: absolute;
+    top: calc(env(safe-area-inset-top, 0px) + 10px);
+    right: calc(env(safe-area-inset-right, 0px) + 12px);
+    width: 44px; height: 44px;
+    border: none; border-radius: 50%;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--ink);
+    display: flex; align-items: center; justify-content: center;
+    touch-action: manipulation;
+    cursor: pointer;
+  }
+  #newBtn:active { background: rgba(255, 255, 255, 0.14); }
+  #newBtn:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  #ver {
+    position: absolute;
+    left: calc(env(safe-area-inset-left, 0px) + 14px);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
+    font-size: 10px;
+    color: rgba(207, 224, 216, 0.35);
+    pointer-events: none;
+  }
+  #rotate {
+    display: none;
+    position: fixed; inset: 0; z-index: 10;
+    background: var(--felt-deep);
+    color: var(--ink);
+    align-items: center; justify-content: center;
+    font-size: 16px;
+  }
+  @media (orientation: landscape) and (max-height: 500px) {
+    #rotate { display: flex; }
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="board"></canvas>
+  <button id="newBtn" aria-label="새 판">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M20 11a8 8 0 1 0-2.3 5.7"/>
+      <path d="M20 4v7h-7"/>
+    </svg>
+  </button>
+  <div id="ver"></div>
+</div>
+<div id="rotate">세로로 돌려주세요</div>
+
+<script>
+// ===================== 설정 =====================
+const CONFIG = {
+  VERSION: 'v1.0.0',          // sw.js 의 CACHE_NAME 과 반드시 같이 올릴 것
+  ROWS: 6,
+  COLS: 6,
+  PIECE_SIZE_WEIGHTS: { 2: 1, 3: 3, 4: 4, 5: 3 },  // 조각 칸 수별 가중치
+  MIN_PIECE: 2,               // 이보다 작은 조각은 이웃에 병합
+  BOARD_W_RATIO: 0.9,         // 보드 최대 폭 (화면 폭 대비)
+  BOARD_H_RATIO: 0.45,        // 보드 최대 높이 (화면 높이 대비)
+  BOARD_TOP_PX: 66,
+  TRAY_GAP_PX: 28,
+  SIDE_PAD_PX: 14,
+  BOTTOM_PAD_PX: 22,
+  TRAY_SCALE_MAX: 0.62,       // 대기 영역 조각 크기 상한 (보드 칸 대비)
+  TRAY_CELL_MIN_PX: 14,
+  LIFT_CELLS: 1.1,            // 터치 드래그 시 손가락 위로 띄우는 거리 (칸 단위)
+  LIFT_MS: 110,
+  TWEEN_MS: 70,               // 위치 보간 시정수
+  ENTER_OFFSET_PX: 36,
+  WIN_PULSE_MS: 380,
+  WIN_STAGGER_MS: 45,
+  WIN_HOLD_MS: 1100,
+};
+
+const PALETTE = [
+  '#E8B84A', '#7FA37A', '#6E93B8', '#D98FA0', '#9B86C4', '#E6D3A3',
+  '#5FA8A0', '#E8935A', '#B7C95A', '#9C6F52', '#C9A27A', '#F0A9A0',
+];
+
+const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// ===================== 난수 =====================
+/** 새 32bit 시드. Returns: uint32 */
+function newSeed() {
+  const a = new Uint32Array(1);
+  crypto.getRandomValues(a);
+  return a[0];
+}
+
+/** mulberry32 PRNG. Args: seed uint32. Returns: () => [0,1) */
+function makeRng(seed) {
+  let s = seed >>> 0;
+  return function () {
+    s = (s + 0x6D2B79F5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function shuffle(arr, rng) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function pickSize(rng) {
+  const entries = Object.entries(CONFIG.PIECE_SIZE_WEIGHTS);
+  const total = entries.reduce((s, [, w]) => s + w, 0);
+  let x = rng() * total;
+  for (const [k, w] of entries) { x -= w; if (x < 0) return Number(k); }
+  return Number(entries[entries.length - 1][0]);
+}
+
+// ===================== 판 분할 생성 =====================
+const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+
+/**
+ * 완성된 판을 무작위 조각으로 분할. 정답이 반드시 존재함을 보장.
+ * Args: rows, cols (칸), rng. Returns: [[ [r,c], ... ], ...] 조각별 칸 목록
+ */
+function generateRegions(rows, cols, rng) {
+  const owner = Array.from({ length: rows }, () => Array(cols).fill(-1));
+  const inB = (r, c) => r >= 0 && r < rows && c >= 0 && c < cols;
+  const freeNb = (r, c) =>
+    DIRS.reduce((n, [dr, dc]) => n + (inB(r + dr, c + dc) && owner[r + dr][c + dc] === -1 ? 1 : 0), 0);
+  const regions = [];
+
+  while (true) {
+    // 자유 이웃이 가장 적은 칸부터 시작 -> 고립된 자투리 칸 감소
+    let best = [], bestN = 9;
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      if (owner[r][c] !== -1) continue;
+      const n = freeNb(r, c);
+      if (n < bestN) { bestN = n; best = [[r, c]]; }
+      else if (n === bestN) best.push([r, c]);
+    }
+    if (!best.length) break;
+
+    const [r0, c0] = best[Math.floor(rng() * best.length)];
+    const id = regions.length;
+    const target = pickSize(rng);
+    const cells = [[r0, c0]];
+    owner[r0][c0] = id;
+
+    while (cells.length < target) {
+      const seen = new Set(), frontier = [];
+      for (const [r, c] of cells) for (const [dr, dc] of DIRS) {
+        const nr = r + dr, nc = c + dc, key = nr * cols + nc;
+        if (inB(nr, nc) && owner[nr][nc] === -1 && !seen.has(key)) { seen.add(key); frontier.push([nr, nc]); }
+      }
+      if (!frontier.length) break;
+      const [nr, nc] = frontier[Math.floor(rng() * frontier.length)];
+      owner[nr][nc] = id;
+      cells.push([nr, nc]);
+    }
+    regions.push(cells);
+  }
+
+  // 너무 작은 조각은 가장 작은 이웃 조각에 병합
+  let merged = true;
+  while (merged) {
+    merged = false;
+    for (let i = 0; i < regions.length; i++) {
+      const reg = regions[i];
+      if (!reg.length || reg.length >= CONFIG.MIN_PIECE) continue;
+      const nbIds = new Set();
+      for (const [r, c] of reg) for (const [dr, dc] of DIRS) {
+        const nr = r + dr, nc = c + dc;
+        if (inB(nr, nc) && owner[nr][nc] !== i) nbIds.add(owner[nr][nc]);
+      }
+      if (!nbIds.size) continue;
+      let tgt = -1;
+      for (const j of nbIds) if (tgt === -1 || regions[j].length < regions[tgt].length) tgt = j;
+      for (const [r, c] of reg) { owner[r][c] = tgt; regions[tgt].push([r, c]); }
+      regions[i] = [];
+      merged = true;
+    }
+  }
+  return regions.filter(r => r.length);
+}
+
+/** 칸 목록을 원점 기준으로 정규화한 조각 객체 생성 */
+function makePiece(cells, id, color) {
+  const minR = Math.min(...cells.map(c => c[0]));
+  const minC = Math.min(...cells.map(c => c[1]));
+  const norm = cells.map(([r, c]) => [r - minR, c - minC]);
+  return {
+    id, color,
+    cells: norm,
+    set: new Set(norm.map(([r, c]) => r + ',' + c)),
+    w: Math.max(...norm.map(c => c[1])) + 1,
+    h: Math.max(...norm.map(c => c[0])) + 1,
+    loc: 'tray',          // 'tray' | 'board' | 'drag'
+    row: 0, col: 0,       // 보드 위치 (칸)
+    tx: 0, ty: 0,         // 대기 영역 위치 (px)
+    cur: { x: 0, y: 0, s: 1 },  // 현재 그려지는 위치·칸 크기 (px)
+  };
+}
+
+// ===================== 상태 =====================
+const canvas = document.getElementById('board');
+const ctx = canvas.getContext('2d');
+const state = {
+  rows: CONFIG.ROWS, cols: CONFIG.COLS,
+  pieces: [], occ: [], drag: null,
+  winning: false, winStart: 0, seed: 0,
+};
+const L = {};  // 레이아웃 (px)
+
+function recomputeOcc() {
+  state.occ = Array.from({ length: state.rows }, () => Array(state.cols).fill(-1));
+  for (const p of state.pieces) if (p.loc === 'board')
+    for (const [r, c] of p.cells) state.occ[p.row + r][p.col + c] = p.id;
+}
+
+function canPlace(p, row, col) {
+  for (const [r, c] of p.cells) {
+    const rr = row + r, cc = col + c;
+    if (rr < 0 || rr >= state.rows || cc < 0 || cc >= state.cols) return false;
+    if (state.occ[rr][cc] !== -1) return false;
+  }
+  return true;
+}
+
+function isComplete() {
+  let n = 0;
+  for (const p of state.pieces) if (p.loc === 'board') n += p.cells.length;
+  return n === state.rows * state.cols;
+}
+
+// ===================== 레이아웃 =====================
+function layout() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const W = canvas.clientWidth, H = canvas.clientHeight;
+  canvas.width = Math.round(W * dpr);
+  canvas.height = Math.round(H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const cell = Math.floor(Math.min(W * CONFIG.BOARD_W_RATIO / state.cols, H * CONFIG.BOARD_H_RATIO / state.rows));
+  const bw = cell * state.cols, bh = cell * state.rows;
+  const bx = Math.round((W - bw) / 2), by = CONFIG.BOARD_TOP_PX;
+  const trayY = by + bh + CONFIG.TRAY_GAP_PX;
+  Object.assign(L, {
+    W, H, cell, bx, by, bw, bh,
+    trayX: CONFIG.SIDE_PAD_PX, trayY,
+    trayW: W - 2 * CONFIG.SIDE_PAD_PX,
+    trayH: Math.max(40, H - trayY - CONFIG.BOTTOM_PAD_PX),
+  });
+
+  packTray(state.pieces.filter(p => p.loc === 'tray'));
+  for (const p of state.pieces) if (p.loc !== 'drag') p.cur = targetOf(p);
+  render(performance.now());
+}
+
+/** 대기 영역에 조각들을 선반(shelf) 방식으로 배치. 들어갈 때까지 조각 크기를 줄임 */
+function packTray(list) {
+  const maxTc = Math.floor(L.cell * CONFIG.TRAY_SCALE_MAX);
+  L.tc = maxTc;
+  if (!list.length) return;
+  const sorted = [...list].sort((a, b) => b.h - a.h);
+  for (let tc = maxTc; tc >= CONFIG.TRAY_CELL_MIN_PX; tc--) {
+    if (shelf(sorted, tc, false)) { L.tc = tc; return; }
+  }
+  L.tc = CONFIG.TRAY_CELL_MIN_PX;
+  shelf(sorted, L.tc, true);
+}
+
+function shelf(list, tc, force) {
+  const gap = Math.max(8, tc * 0.55);
+  const rows = [];
+  let row = { items: [], w: 0, h: 0 };
+  for (const p of list) {
+    const pw = p.w * tc, ph = p.h * tc;
+    if (row.items.length && row.w + gap + pw > L.trayW) { rows.push(row); row = { items: [], w: 0, h: 0 }; }
+    row.w += (row.items.length ? gap : 0) + pw;
+    row.h = Math.max(row.h, ph);
+    row.items.push(p);
+  }
+  rows.push(row);
+  const total = rows.reduce((s, r) => s + r.h, 0) + gap * (rows.length - 1);
+  if (total > L.trayH && !force) return false;
+
+  let y = L.trayY + Math.max(0, (L.trayH - total) / 2);
+  for (const r of rows) {
+    let x = L.trayX + (L.trayW - r.w) / 2;
+    for (const p of r.items) {
+      p.tx = x;
+      p.ty = y + (r.h - p.h * tc) / 2;
+      x += p.w * tc + gap;
+    }
+    y += r.h + gap;
+  }
+  return true;
+}
+
+function targetOf(p) {
+  if (p.loc === 'board') return { x: L.bx + p.col * L.cell, y: L.by + p.row * L.cell, s: L.cell };
+  return { x: p.tx, y: p.ty, s: L.tc };
+}
+
+// ===================== 스테이지 =====================
+function newStage() {
+  state.seed = newSeed();
+  window.__seed = state.seed;  // 디버그용: 콘솔에서 확인
+  const rng = makeRng(state.seed);
+  const regions = shuffle(generateRegions(state.rows, state.cols, rng), rng);
+  const colors = shuffle([...PALETTE], rng);
+  state.pieces = regions.map((cells, i) => makePiece(cells, i, colors[i % colors.length]));
+  state.drag = null;
+  state.winning = false;
+  recomputeOcc();
+  packTray(state.pieces);
+  for (const p of state.pieces) {
+    const t = targetOf(p);
+    p.cur = { x: t.x, y: t.y + (REDUCED_MOTION ? 0 : CONFIG.ENTER_OFFSET_PX), s: t.s };
+  }
+  requestFrame();
+}
+
+function startWin() {
+  state.winning = true;
+  state.winStart = performance.now();
+  requestFrame();
+  setTimeout(newStage, CONFIG.WIN_HOLD_MS);
+}
+
+// ===================== 입력 =====================
+function localPt(e) {
+  const rect = canvas.getBoundingClientRect();
+  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+
+function hitTest(x, y) {
+  for (let i = state.pieces.length - 1; i >= 0; i--) {
+    const p = state.pieces[i];
+    const { x: px, y: py, s } = p.cur;
+    const pad = Math.max(4, s * 0.15);
+    for (const [r, c] of p.cells) {
+      const cx = px + c * s, cy = py + r * s;
+      if (x >= cx - pad && x <= cx + s + pad && y >= cy - pad && y <= cy + s + pad) return p;
+    }
+  }
+  return null;
+}
+
+function updateDrag(now) {
+  const d = state.drag;
+  const k = REDUCED_MOTION ? 1 : Math.min(1, (now - d.t0) / CONFIG.LIFT_MS);
+  const lift = d.liftFull * k;
+  const s = L.cell;
+  d.p.cur = { x: d.x - d.gx * s, y: d.y - d.gy * s - lift, s };
+  const col = Math.round((d.p.cur.x - L.bx) / s);
+  const row = Math.round((d.p.cur.y - L.by) / s);
+  d.ghost = canPlace(d.p, row, col) ? { row, col } : null;
+}
+
+canvas.addEventListener('pointerdown', e => {
+  if (state.drag || state.winning) return;
+  const { x, y } = localPt(e);
+  const p = hitTest(x, y);
+  if (!p) return;
+  e.preventDefault();
+  canvas.setPointerCapture(e.pointerId);
+
+  const s = p.cur.s;
+  state.drag = {
+    p, id: e.pointerId, x, y,
+    gx: (x - p.cur.x) / s, gy: (y - p.cur.y) / s,   // 잡은 위치 (칸 단위)
+    liftFull: e.pointerType === 'mouse' ? 0 : L.cell * CONFIG.LIFT_CELLS,
+    t0: performance.now(),
+    origin: { loc: p.loc, row: p.row, col: p.col, tx: p.tx, ty: p.ty },
+    ghost: null,
+  };
+  p.loc = 'drag';
+  // 맨 위로 올림
+  state.pieces.splice(state.pieces.indexOf(p), 1);
+  state.pieces.push(p);
+  recomputeOcc();
+  updateDrag(performance.now());
+  requestFrame();
+});
+
+canvas.addEventListener('pointermove', e => {
+  const d = state.drag;
+  if (!d || e.pointerId !== d.id) return;
+  const { x, y } = localPt(e);
+  d.x = x; d.y = y;
+  updateDrag(performance.now());
+  requestFrame();
+});
+
+function endDrag(e, cancelled) {
+  const d = state.drag;
+  if (!d || e.pointerId !== d.id) return;
+  const p = d.p;
+  const cy = p.cur.y + p.h * p.cur.s / 2;
+  const cx = p.cur.x + p.w * p.cur.s / 2;
+
+  if (!cancelled && d.ghost) {
+    p.loc = 'board'; p.row = d.ghost.row; p.col = d.ghost.col;
+  } else if (!cancelled && cy > L.by + L.bh) {
+    // 대기 영역에 자유롭게 내려놓기
+    p.loc = 'tray';
+    p.tx = Math.min(Math.max(cx - p.w * L.tc / 2, L.trayX), L.trayX + L.trayW - p.w * L.tc);
+    p.ty = Math.min(Math.max(cy - p.h * L.tc / 2, L.trayY), L.trayY + L.trayH - p.h * L.tc);
+  } else {
+    // 원래 자리로 복귀
+    Object.assign(p, d.origin);
+  }
+  state.drag = null;
+  recomputeOcc();
+  requestFrame();
+  if (isComplete()) startWin();
+}
+canvas.addEventListener('pointerup', e => endDrag(e, false));
+canvas.addEventListener('pointercancel', e => endDrag(e, true));
+
+document.getElementById('newBtn').addEventListener('click', () => {
+  if (state.drag || state.winning) return;
+  newStage();
+});
+
+// iOS Safari 기본 제스처 차단
+document.addEventListener('gesturestart', e => e.preventDefault());
+document.addEventListener('dblclick', e => e.preventDefault());
+document.addEventListener('contextmenu', e => e.preventDefault());
+document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+
+// ===================== 그리기 =====================
+function shade(hex, amt) {
+  // amt < 0 이면 어둡게, > 0 이면 밝게
+  const n = parseInt(hex.slice(1), 16);
+  let r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+  const t = amt < 0 ? 0 : 255, a = Math.abs(amt);
+  r = Math.round(r + (t - r) * a); g = Math.round(g + (t - g) * a); b = Math.round(b + (t - b) * a);
+  return `rgb(${r},${g},${b})`;
+}
+
+function rrect(path, x, y, w, h, rad) {
+  const [tl, tr, br, bl] = Array.isArray(rad) ? rad : [rad, rad, rad, rad];
+  path.moveTo(x + tl, y);
+  path.lineTo(x + w - tr, y);
+  path.arcTo(x + w, y, x + w, y + tr, tr);
+  path.lineTo(x + w, y + h - br);
+  path.arcTo(x + w, y + h, x + w - br, y + h, br);
+  path.lineTo(x + bl, y + h);
+  path.arcTo(x, y + h, x, y + h - bl, bl);
+  path.lineTo(x, y + tl);
+  path.arcTo(x, y, x + tl, y, tl);
+  path.closePath();
+}
+
+/** 칸은 사방 inset, 인접 칸 사이는 다리(bridge)로 연결 -> 외곽만 둥글고 안쪽 모서리가 깨끗한 Path2D */
+function piecePath(p, x, y, s, dy) {
+  const g = s * 0.05, rad = s * 0.2;
+  const has = (r, c) => p.set.has(r + ',' + c);
+  const path = new Path2D();
+  for (const [r, c] of p.cells) {
+    const T = has(r - 1, c), B = has(r + 1, c), Lf = has(r, c - 1), R = has(r, c + 1);
+    const x0 = x + c * s + g, y0 = y + r * s + g + dy, w = s - 2 * g;
+    rrect(path, x0, y0, w, w, [
+      !T && !Lf ? rad : 0, !T && !R ? rad : 0, !B && !R ? rad : 0, !B && !Lf ? rad : 0,
+    ]);
+    // 오른쪽·아래 이웃과의 다리
+    if (R) path.rect(x0 + w - 0.5, y0, 2 * g + 1, w);
+    if (B) path.rect(x0, y0 + w - 0.5, w, 2 * g + 1);
+    // 2x2 가운데 틈
+    if (R && B && has(r + 1, c + 1)) path.rect(x0 + w - 0.5, y0 + w - 0.5, 2 * g + 1, 2 * g + 1);
+  }
+  return path;
+}
+
+function drawPiece(p, x, y, s, lifted) {
+  const depth = Math.max(2, s * 0.07);
+  ctx.save();
+  if (lifted) {
+    ctx.shadowColor = 'rgba(0,0,0,0.38)';
+    ctx.shadowBlur = s * 0.35;
+    ctx.shadowOffsetY = s * 0.18;
+  }
+  ctx.fillStyle = shade(p.color, -0.38);
+  ctx.fill(piecePath(p, x, y, s, depth));
+  ctx.restore();
+
+  const body = piecePath(p, x, y, s, 0);
+  ctx.fillStyle = p.color;
+  ctx.fill(body);
+
+  // 윗면 하이라이트: 한 경로로 모아 한 번만 칠해 이음새 겹침 방지
+  const hl = new Path2D();
+  for (const [r, c] of p.cells) {
+    if (p.set.has((r - 1) + ',' + c)) continue;
+    hl.rect(x + c * s - 0.5, y + r * s, s + 1, s * 0.16);
+  }
+  ctx.save();
+  ctx.clip(body);
+  ctx.fillStyle = 'rgba(255,255,255,0.22)';
+  ctx.fill(hl);
+  ctx.restore();
+}
+
+function drawBoard() {
+  const { bx, by, bw, bh, cell: s } = L;
+  const pad = s * 0.12;
+  const tray = new Path2D();
+  rrect(tray, bx - pad, by - pad, bw + 2 * pad, bh + 2 * pad, s * 0.24);
+  ctx.fillStyle = '#132823';
+  ctx.fill(tray);
+
+  const holes = new Path2D();
+  for (let r = 0; r < state.rows; r++) for (let c = 0; c < state.cols; c++)
+    rrect(holes, bx + c * s + s * 0.07, by + r * s + s * 0.07, s * 0.86, s * 0.86, s * 0.16);
+  ctx.fillStyle = 'rgba(255,255,255,0.045)';
+  ctx.fill(holes);
+}
+
+function drawGhost() {
+  const d = state.drag;
+  if (!d || !d.ghost) return;
+  const s = L.cell;
+  ctx.save();
+  ctx.globalAlpha = 0.32;
+  ctx.fillStyle = d.p.color;
+  ctx.fill(piecePath(d.p, L.bx + d.ghost.col * s, L.by + d.ghost.row * s, s, 0));
+  ctx.restore();
+}
+
+function winBump(p, now) {
+  if (!state.winning || REDUCED_MOTION) return 0;
+  const t = (now - state.winStart - (p.row + p.col) * CONFIG.WIN_STAGGER_MS) / CONFIG.WIN_PULSE_MS;
+  return t > 0 && t < 1 ? Math.sin(Math.PI * t) * 0.08 : 0;
+}
+
+function render(now) {
+  ctx.clearRect(0, 0, L.W, L.H);
+  drawBoard();
+  drawGhost();
+  for (const p of state.pieces) {
+    if (p.loc !== 'board') continue;
+    const b = winBump(p, now);
+    const s = p.cur.s * (1 + b);
+    const cx = p.cur.x + p.w * p.cur.s / 2, cy = p.cur.y + p.h * p.cur.s / 2;
+    drawPiece(p, cx - p.w * s / 2, cy - p.h * s / 2, s, false);
+  }
+  for (const p of state.pieces) if (p.loc === 'tray') drawPiece(p, p.cur.x, p.cur.y, p.cur.s, false);
+  if (state.drag) { const p = state.drag.p; drawPiece(p, p.cur.x, p.cur.y, p.cur.s, true); }
+}
+
+// ===================== 애니메이션 루프 =====================
+let rafId = 0, lastT = 0;
+function requestFrame() { if (!rafId) rafId = requestAnimationFrame(frame); }
+
+function stepTweens(dt) {
+  const k = REDUCED_MOTION ? 1 : 1 - Math.exp(-dt / CONFIG.TWEEN_MS);
+  let moving = false;
+  for (const p of state.pieces) {
+    if (p.loc === 'drag') continue;
+    const t = targetOf(p);
+    for (const key of ['x', 'y', 's']) {
+      const diff = t[key] - p.cur[key];
+      if (Math.abs(diff) > 0.3) { p.cur[key] += diff * k; moving = true; }
+      else p.cur[key] = t[key];
+    }
+  }
+  return moving;
+}
+
+function frame(t) {
+  rafId = 0;
+  const dt = lastT ? Math.min(50, t - lastT) : 16;
+  lastT = t;
+  if (state.drag) updateDrag(t);
+  const moving = stepTweens(dt);
+  render(t);
+  if (moving || state.drag || state.winning) requestFrame();
+  else lastT = 0;
+}
+
+// ===================== 시작 =====================
+document.getElementById('ver').textContent = CONFIG.VERSION;
+window.addEventListener('resize', layout);
+if (window.visualViewport) window.visualViewport.addEventListener('resize', layout);
+layout();
+newStage();
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>
