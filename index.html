@@ -72,6 +72,42 @@
   }
   #againBtn.show { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%) scale(1); }
   #againBtn:active { background: #35605A; }
+  #wave {
+    position: absolute;
+    top: calc(env(safe-area-inset-top, 0px) + 10px);
+    left: calc(env(safe-area-inset-left, 0px) + 18px);
+    height: 44px; line-height: 44px;
+    font-size: 15px; font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    color: rgba(207, 224, 216, 0.42);
+    pointer-events: none;
+    transition: opacity 0.2s;
+  }
+  #wave.hide { opacity: 0; }
+  #overInfo {
+    position: absolute;
+    display: flex; flex-direction: column; align-items: center;
+    transform: translate(-50%, -100%);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease-out;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  }
+  #overInfo.show { opacity: 1; }
+  #overWave {
+    font-size: 60px; font-weight: 600; line-height: 1;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+  }
+  #overWave.record { color: #E8B84A; }
+  #overBest {
+    display: flex; align-items: center; gap: 5px;
+    margin-top: 6px;
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+    color: rgba(207, 224, 216, 0.55);
+  }
+  #overBest.none { visibility: hidden; }
   #ver {
     position: absolute;
     left: calc(env(safe-area-inset-left, 0px) + 14px);
@@ -96,6 +132,16 @@
 <div id="stage">
   <div id="wrap">
     <canvas id="board"></canvas>
+    <div id="overInfo" aria-live="polite">
+      <div id="overWave"></div>
+      <div id="overBest" class="none">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 18h18l-2-11-5 5-2-7-2 7-5-5z"/>
+        </svg>
+        <span id="bestNum"></span>
+      </div>
+    </div>
     <button id="againBtn" class="roundBtn" aria-label="다시">
       <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor"
            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -109,6 +155,7 @@
       <path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>
     </svg>
   </button>
+  <div id="wave" aria-label="wave"></div>
   <div id="ver"></div>
 </div>
 <div id="rotate">
@@ -121,11 +168,14 @@
 <script>
 // ===================== 설정 =====================
 const CONFIG = {
-  VERSION: 'v2.0.0',          // sw.js 의 CACHE_NAME 과 반드시 같이 올릴 것
+  VERSION: 'v2.1.0',          // sw.js 의 CACHE_NAME 과 반드시 같이 올릴 것
   ROWS: 8,
   COLS: 8,
   TRAY_SLOTS: 3,
-  REFILL_TRIES: 30,           // 새 3개 중 최소 1개가 들어가도록 재추첨하는 최대 횟수
+  REFILL_TRIES: 40,           // 3개 모두 놓을 수 있는 조합이 나올 때까지 재추첨하는 최대 횟수
+  SEARCH_BUDGET: 60000,       // 3개 배치 가능 여부 탐색 1회당 최대 검사 위치 수 (폰 끊김 방지)
+  CONGESTION_ALPHA: 0.5,      // 혼잡도 가중치 강도: w' = w * exp(-alpha * fill * (cells - 1))
+  RESCUE_FILL: 0.5,           // 판이 이 비율 이상 차면 3개 중 1개는 줄을 지울 수 있는 블록
   BOARD_W_RATIO: 0.92,
   BOARD_H_RATIO: 0.5,
   BOARD_TOP_PX: 66,
@@ -239,6 +289,10 @@ const canvas = document.getElementById('board');
 const ctx = canvas.getContext('2d');
 const againBtn = document.getElementById('againBtn');
 const newBtn = document.getElementById('newBtn');
+const waveEl = document.getElementById('wave');
+const overInfo = document.getElementById('overInfo');
+const overWave = document.getElementById('overWave');
+const overBest = document.getElementById('overBest');
 
 const state = {
   rows: CONFIG.ROWS, cols: CONFIG.COLS,
@@ -248,6 +302,8 @@ const state = {
   clearing: [],    // 지워지는 칸 애니메이션 { r, c, color, t0 }
   over: false, overStart: 0,
   rng: Math.random,
+  wave: 0,         // 이번 판 웨이브 (3개 공급마다 +1)
+  best: 0,         // 세션 최고 웨이브 (메모리에만, 저장 안 함)
 };
 const L = {};
 
@@ -296,33 +352,126 @@ function newGame() {
   state.drag = null;
   state.clearing = [];
   state.over = false;
+  state.wave = 0;
   againBtn.classList.remove('show');
+  overInfo.classList.remove('show');
   newBtn.classList.remove('hide');
+  waveEl.classList.remove('hide');
   refill();
   requestFrame();
 }
 
-/** 새 블록 3개 공급. 최소 1개는 현재 판에 들어가도록 보정 */
+// ---------- 블록 생성용 시뮬레이션 (Uint8Array 판) ----------
+function snapshot() {
+  const g = new Uint8Array(state.rows * state.cols);
+  for (let r = 0; r < state.rows; r++) for (let c = 0; c < state.cols; c++)
+    if (state.grid[r][c]) g[r * state.cols + c] = 1;
+  return g;
+}
+
+function simFits(g, cells, row, col) {
+  const C = state.cols;
+  for (const [r, c] of cells) if (g[(row + r) * C + col + c]) return false;
+  return true;
+}
+
+/** 배치 후 가득 찬 줄까지 지운 새 판과 지운 줄 수. Returns: { g, lines } */
+function simPlace(g, cells, row, col) {
+  const R = state.rows, C = state.cols, n = g.slice();
+  for (const [r, c] of cells) n[(row + r) * C + col + c] = 1;
+  const rows = [], cols = [];
+  for (let r = 0; r < R; r++) { let f = 1; for (let c = 0; c < C && f; c++) f = n[r * C + c]; if (f) rows.push(r); }
+  for (let c = 0; c < C; c++) { let f = 1; for (let r = 0; r < R && f; r++) f = n[r * C + c]; if (f) cols.push(c); }
+  for (const r of rows) for (let c = 0; c < C; c++) n[r * C + c] = 0;
+  for (const c of cols) for (let r = 0; r < R; r++) n[r * C + c] = 0;
+  return { g: n, lines: rows.length + cols.length };
+}
+
+const PERMS3 = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+
+/** 어떤 순서로든 3개를 (줄 삭제 반영하며) 모두 놓을 수 있는가. 탐색 예산 초과 시 false */
+function allPlaceable(pieces, g) {
+  let budget = CONFIG.SEARCH_BUDGET;
+  const R = state.rows, C = state.cols;
+  function dfs(order, k, board) {
+    if (k === order.length) return true;
+    const p = pieces[order[k]];
+    for (let r = 0; r <= R - p.h; r++) for (let c = 0; c <= C - p.w; c++) {
+      if (--budget < 0) return false;
+      if (simFits(board, p.cells, r, c) && dfs(order, k + 1, simPlace(board, p.cells, r, c).g)) return true;
+    }
+    return false;
+  }
+  for (const o of PERMS3) {
+    if (budget < 0) return false;
+    if (dfs(o, 0, g)) return true;
+  }
+  return false;
+}
+
+/** 지금 판에 놓으면 최소 한 줄이 지워지는 모양들 */
+function rescueShapes(g) {
+  const out = [];
+  for (const s of SHAPE_POOL) {
+    const h = Math.max(...s.cells.map(c => c[0])) + 1, w = Math.max(...s.cells.map(c => c[1])) + 1;
+    let ok = false;
+    for (let r = 0; r <= state.rows - h && !ok; r++) for (let c = 0; c <= state.cols - w && !ok; c++)
+      ok = simFits(g, s.cells, r, c) && simPlace(g, s.cells, r, c).lines > 0;
+    if (ok) out.push(s.cells);
+  }
+  return out;
+}
+
+/** 혼잡도(fill 0~1)에 따라 큰 블록 가중치를 지수적으로 낮춘 추첨 */
+function pickWeighted(fill, rng) {
+  const ws = SHAPE_POOL.map(s => s.weight * Math.exp(-CONFIG.CONGESTION_ALPHA * fill * (s.cells.length - 1)));
+  let x = rng() * ws.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < ws.length; i++) { x -= ws[i]; if (x < 0) return SHAPE_POOL[i].cells; }
+  return SHAPE_POOL[SHAPE_POOL.length - 1].cells;
+}
+
+/**
+ * 새 블록 3개 공급.
+ * 1) 혼잡도 가중치  2) 판이 많이 차면 구원 블록 1개  3) 3개 모두 놓을 수 있는 조합만 통과
+ * 실패 시 최소 1개는 들어가게 하는 기존 보정으로 후퇴
+ */
 function refill() {
-  const rng = state.rng;
-  const draw = () => Array.from({ length: CONFIG.TRAY_SLOTS }, () =>
-    makePiece(pickShape(rng), PALETTE[Math.floor(rng() * PALETTE.length)]));
-  let cand = draw();
-  for (let i = 0; i < CONFIG.REFILL_TRIES && !cand.some(fitsAnywhere); i++) cand = draw();
-  if (!cand.some(fitsAnywhere)) {
-    // 재추첨으로도 안 되면 들어가는 모양 하나를 직접 찾아 끼워 넣음
-    const order = [...SHAPE_POOL].sort(() => rng() - 0.5);
-    for (const s of order) {
-      const p = makePiece(s.cells, cand[0].color);
-      if (fitsAnywhere(p)) { cand[Math.floor(rng() * cand.length)] = p; break; }
+  const rng = state.rng, g = snapshot();
+  const fill = g.reduce((a, b) => a + b, 0) / g.length;
+  const rescue = fill >= CONFIG.RESCUE_FILL ? rescueShapes(g) : [];
+  const color = () => PALETTE[Math.floor(rng() * PALETTE.length)];
+  const draw = () => {
+    const arr = [];
+    if (rescue.length) arr.push(makePiece(rescue[Math.floor(rng() * rescue.length)], color()));
+    while (arr.length < CONFIG.TRAY_SLOTS) arr.push(makePiece(pickWeighted(fill, rng), color()));
+    for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; }
+    return arr;
+  };
+
+  let cand = null;
+  for (let i = 0; i < CONFIG.REFILL_TRIES && !cand; i++) {
+    const c = draw();
+    if (allPlaceable(c, g)) cand = c;
+  }
+  if (!cand) {
+    cand = draw();
+    if (!cand.some(fitsAnywhere)) {
+      const order = [...SHAPE_POOL].sort(() => rng() - 0.5);
+      for (const s of order) {
+        const p = makePiece(s.cells, cand[0].color);
+        if (fitsAnywhere(p)) { cand[Math.floor(rng() * cand.length)] = p; break; }
+      }
     }
   }
+
   cand.forEach((p, i) => {
     p.slot = i;
     const t = targetOf(p);
     p.cur = { x: t.x, y: t.y + (REDUCED_MOTION ? 0 : CONFIG.ENTER_OFFSET_PX), s: t.s };
   });
   state.tray = cand;
+  state.wave++;
+  waveEl.textContent = state.wave;
 }
 
 function place(p, row, col) {
@@ -357,9 +506,19 @@ function place(p, row, col) {
 function gameOver() {
   state.over = true;
   state.overStart = performance.now();
+  const prevBest = state.best;
+  state.best = Math.max(state.best, state.wave);
+  overWave.textContent = state.wave;
+  overWave.classList.toggle('record', prevBest > 0 && state.wave > prevBest);
+  document.getElementById('bestNum').textContent = state.best;
+  overBest.classList.toggle('none', prevBest === 0);
   newBtn.classList.add('hide');
-  setTimeout(() => { if (state.over) againBtn.classList.add('show'); },
-    REDUCED_MOTION ? 0 : CONFIG.AGAIN_DELAY_MS);
+  waveEl.classList.add('hide');
+  setTimeout(() => {
+    if (!state.over) return;
+    againBtn.classList.add('show');
+    overInfo.classList.add('show');
+  }, REDUCED_MOTION ? 0 : CONFIG.AGAIN_DELAY_MS);
   requestFrame();
 }
 
@@ -387,6 +546,8 @@ function layout() {
 
   againBtn.style.left = (bx + bw / 2) + 'px';
   againBtn.style.top = (by + bh / 2) + 'px';
+  overInfo.style.left = (bx + bw / 2) + 'px';
+  overInfo.style.top = (by + bh / 2 - 42 - 18) + 'px';   // 버튼 반지름 42px + 간격
 
   for (const p of state.tray) if (p && p.loc === 'tray') p.cur = targetOf(p);
   render(performance.now());
